@@ -1,5 +1,10 @@
 import warnings
 
+try:
+    import torch_musa
+except ImportError:
+    pass
+
 from .color_correct import color_correct_affine, color_correct_quadratic
 from .compression import PngCompression
 from .cuda._torch_impl import accumulate

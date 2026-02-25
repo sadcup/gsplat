@@ -8,6 +8,14 @@ from .base import Strategy
 from .ops import duplicate, remove, reset_opa, split
 
 
+def _empty_cache():
+    """Empty cache for the available device (CUDA, MUSA, or CPU)."""
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.empty_cache()
+    elif torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 @dataclass
 class DefaultStrategy(Strategy):
     """A default strategy that follows the original 3DGS paper:
@@ -144,9 +152,9 @@ class DefaultStrategy(Strategy):
         info: Dict[str, Any],
     ):
         """Callback function to be executed before the `loss.backward()` call."""
-        assert (
-            self.key_for_gradient in info
-        ), "The 2D means of the Gaussians is required but missing."
+        assert self.key_for_gradient in info, (
+            "The 2D means of the Gaussians is required but missing."
+        )
         info[self.key_for_gradient].retain_grad()
 
     def step_post_backward(
@@ -190,7 +198,7 @@ class DefaultStrategy(Strategy):
             state["count"].zero_()
             if self.refine_scale2d_stop_iter > 0:
                 state["radii"].zero_()
-            torch.cuda.empty_cache()
+            _empty_cache()
 
         if step % self.reset_every == 0 and step > 0:
             reset_opa(

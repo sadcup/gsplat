@@ -8,6 +8,14 @@ import torch
 profiler = {}
 
 
+def _sync():
+    """Synchronize the available device (CUDA, MUSA, or CPU)."""
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.synchronize()
+    elif torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
 class timeit(object):
     """Profiler that is controled by the TIMEIT environment variable.
 
@@ -36,12 +44,12 @@ class timeit(object):
 
     def __enter__(self):
         if self.enabled:
-            torch.cuda.synchronize()
+            _sync()
             self.start_time = time.perf_counter()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.enabled:
-            torch.cuda.synchronize()
+            _sync()
             end_time = time.perf_counter()
             total_time = end_time - self.start_time
             if self.name not in profiler:

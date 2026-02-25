@@ -7,6 +7,21 @@ import torch.distributed.nn.functional as distF
 from torch import Tensor
 
 
+def _get_device_count():
+    """Get device count for CUDA or MUSA."""
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        return torch.musa.device_count()
+    return torch.cuda.device_count()
+
+
+def _set_device(device_id: int):
+    """Set device for CUDA or MUSA."""
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.set_device(device_id)
+    else:
+        torch.cuda.set_device(device_id)
+
+
 def all_gather_int32(
     world_size: int, value: Union[int, Tensor], device: Optional[torch.device] = None
 ) -> List[int]:
@@ -75,9 +90,9 @@ def all_to_all_int32(
     if world_size == 1:
         return values
 
-    assert (
-        len(values) == world_size
-    ), "The length of values should be equal to world_size"
+    assert len(values) == world_size, (
+        "The length of values should be equal to world_size"
+    )
 
     if any(isinstance(v, int) for v in values):
         assert device is not None, "device is required for scalar input"
@@ -221,9 +236,9 @@ def all_to_all_tensor_list(
     for tensor in tensor_list:
         assert len(tensor) == N, "All tensors should have the same first dimension size"
 
-    assert (
-        len(splits) == world_size
-    ), "The length of splits should be equal to world_size"
+    assert len(splits) == world_size, (
+        "The length of splits should be equal to world_size"
+    )
 
     # concatenate tensors and record their sizes
     data = torch.cat([t.reshape(N, -1) for t in tensor_list], dim=-1)
@@ -283,7 +298,7 @@ def _distributed_worker(
         print("Distributed worker: %d / %d" % (world_rank + 1, world_size))
     distributed = world_size > 1
     if distributed:
-        torch.cuda.set_device(local_rank)
+        _set_device(local_rank)
         torch.distributed.init_process_group(
             backend="nccl", world_size=world_size, rank=world_rank
         )
@@ -328,7 +343,7 @@ def cli(fn: Callable, args: Any, verbose: bool = False) -> bool:
             world_rank, world_size, fn, args, local_rank, verbose
         )
 
-    world_size = torch.cuda.device_count()
+    world_size = _get_device_count()
     distributed = world_size > 1
 
     if distributed:

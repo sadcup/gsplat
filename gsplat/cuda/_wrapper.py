@@ -9,6 +9,22 @@ from torch import Tensor
 from typing_extensions import Literal
 
 
+def _sync_device(tensor: torch.Tensor) -> None:
+    """Synchronize the device of a tensor. Works with CUDA, MUSA, and CPU."""
+    if tensor.is_cuda or (hasattr(tensor, "is_musa") and tensor.is_musa):
+        torch.musa.synchronize() if hasattr(
+            torch, "musa"
+        ) and torch.musa.is_available() else torch.cuda.synchronize()
+
+
+def _empty_cache() -> None:
+    """Empty cache for the available device (CUDA, MUSA, or CPU)."""
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.empty_cache()
+    elif torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _make_lazy_cuda_func(name: str) -> Callable:
     def call_cuda(*args, **kwargs):
         # pylint: disable=import-outside-toplevel
@@ -270,9 +286,9 @@ def proj(
         - **Projected means**. [..., C, N, 2]
         - **Projected covariances**. [..., C, N, 2, 2]
     """
-    assert (
-        camera_model != "ftheta"
-    ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+    assert camera_model != "ftheta", (
+        "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+    )
 
     batch_dims = means.shape[:-3]
     C, N = means.shape[-3:-1]
@@ -395,9 +411,9 @@ def fully_fused_projection(
         assert opacities.shape == batch_dims + (N,), opacities.shape
         opacities = opacities.contiguous()
 
-    assert (
-        camera_model != "ftheta"
-    ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+    assert camera_model != "ftheta", (
+        "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+    )
 
     viewmats = viewmats.contiguous()
     Ks = Ks.contiguous()
@@ -649,12 +665,12 @@ def rasterize_to_pixels(
         padded_channels = 0
 
     tile_height, tile_width = isect_offsets.shape[-2:]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     render_colors, render_alphas = _RasterizeToPixels.apply(
         means2d.contiguous(),
@@ -730,9 +746,9 @@ def rasterize_to_pixels_eval3d(
     assert colors.ndim in (num_batch_dims + 2, num_batch_dims + 3), colors.shape
     if colors.ndim == num_batch_dims + 2:
         raise NotImplementedError("packed mode is not supported yet")
-        assert (
-            colors.shape[:-2] == batch_dims and colors.shape[-1] == channels
-        ), colors.shape
+        assert colors.shape[:-2] == batch_dims and colors.shape[-1] == channels, (
+            colors.shape
+        )
     else:
         assert colors.shape == batch_dims + (C, N, channels), colors.shape
     assert opacities.shape == colors.shape[:-1], opacities.shape
@@ -811,12 +827,12 @@ def rasterize_to_pixels_eval3d(
         padded_channels = 0
 
     tile_height, tile_width = isect_offsets.shape[-2:]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     render_colors, render_alphas = _RasterizeToPixelsEval3D.apply(
         means.contiguous(),
@@ -908,12 +924,12 @@ def rasterize_to_indices_in_range(
         tile_height,
         tile_width,
     ), isect_offsets.shape
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     out_gauss_ids, out_indices = _make_lazy_cuda_func("rasterize_to_indices_3dgs")(
         range_start,
@@ -987,9 +1003,9 @@ class _Proj(torch.autograd.Function):
         height: int,
         camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"] = "pinhole",
     ) -> Tuple[Tensor, Tensor]:
-        assert (
-            camera_model != "ftheta"
-        ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+        assert camera_model != "ftheta", (
+            "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+        )
 
         camera_model_type = _make_lazy_cuda_obj(
             f"CameraModelType.{camera_model.upper()}"
@@ -1050,9 +1066,9 @@ class _FullyFusedProjection(torch.autograd.Function):
         camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"] = "pinhole",
         opacities: Optional[Tensor] = None,  # [..., N] or None
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
-        assert (
-            camera_model != "ftheta"
-        ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+        assert camera_model != "ftheta", (
+            "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+        )
 
         camera_model_type = _make_lazy_cuda_obj(
             f"CameraModelType.{camera_model.upper()}"
@@ -1510,9 +1526,13 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
         tile_size = ctx.tile_size
         ftheta_coeffs = ctx.ftheta_coeffs
 
-        (v_means, v_quats, v_scales, v_colors, v_opacities,) = _make_lazy_cuda_func(
-            "rasterize_to_pixels_from_world_3dgs_bwd"
-        )(
+        (
+            v_means,
+            v_quats,
+            v_scales,
+            v_colors,
+            v_opacities,
+        ) = _make_lazy_cuda_func("rasterize_to_pixels_from_world_3dgs_bwd")(
             means,
             quats,
             scales,
@@ -1600,9 +1620,9 @@ class _FullyFusedProjectionPacked(torch.autograd.Function):
         camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"] = "pinhole",
         opacities: Optional[Tensor] = None,  # [..., N] or None
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        assert (
-            camera_model != "ftheta"
-        ), "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+        assert camera_model != "ftheta", (
+            "ftheta camera is only supported via UT, please set with_ut=True in the rasterization()"
+        )
 
         camera_model_type = _make_lazy_cuda_obj(
             f"CameraModelType.{camera_model.upper()}"
@@ -2315,12 +2335,12 @@ def rasterize_to_pixels_2dgs(
     else:
         padded_channels = 0
     tile_height, tile_width = isect_offsets.shape[-2:]
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     (
         render_colors,
@@ -2414,12 +2434,12 @@ def rasterize_to_indices_in_range_2dgs(
         tile_height,
         tile_width,
     ), isect_offsets.shape
-    assert (
-        tile_height * tile_size >= image_height
-    ), f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
-    assert (
-        tile_width * tile_size >= image_width
-    ), f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    assert tile_height * tile_size >= image_height, (
+        f"Assert Failed: {tile_height} * {tile_size} >= {image_height}"
+    )
+    assert tile_width * tile_size >= image_width, (
+        f"Assert Failed: {tile_width} * {tile_size} >= {image_width}"
+    )
 
     out_gauss_ids, out_indices = _make_lazy_cuda_func("rasterize_to_indices_2dgs")(
         range_start,
@@ -2580,7 +2600,7 @@ class _RasterizeToPixels2DGS(torch.autograd.Function):
             v_render_median.contiguous(),
             absgrad,
         )
-        torch.cuda.synchronize()
+        _sync_device(v_render_colors)
         if absgrad:
             means2d.absgrad = v_means2d_abs
 

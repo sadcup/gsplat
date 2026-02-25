@@ -9,6 +9,14 @@ from .base import Strategy
 from .ops import inject_noise_to_position, relocate, sample_add
 
 
+def _empty_cache():
+    """Empty cache for the available device (CUDA, MUSA, or CPU)."""
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.empty_cache()
+    elif torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 @dataclass
 class MCMCStrategy(Strategy):
     """Strategy that follows the paper:
@@ -140,7 +148,7 @@ class MCMCStrategy(Strategy):
                     f"Now having {len(params['means'])} GSs."
                 )
 
-            torch.cuda.empty_cache()
+            _empty_cache()
 
         # add noise to GSs (stop after noise_injection_stop_iter if set)
         noise_stop = (

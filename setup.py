@@ -13,6 +13,7 @@ exec(open("gsplat/version.py", "r").read())
 URL = "https://github.com/nerfstudio-project/gsplat"
 
 BUILD_NO_CUDA = os.getenv("BUILD_NO_CUDA", "0") == "1"
+FORCE_MUSA = os.getenv("FORCE_MUSA", "0") == "1"
 WITH_SYMBOLS = os.getenv("WITH_SYMBOLS", "0") == "1"
 LINE_INFO = os.getenv("LINE_INFO", "0") == "1"
 MAX_JOBS = os.getenv("MAX_JOBS")
@@ -24,7 +25,10 @@ if not MAX_JOBS:
 
 
 def get_ext():
-    from torch.utils.cpp_extension import BuildExtension
+    if FORCE_MUSA:
+        from torch_musa.utils.musa_extension import BuildExtension
+    else:
+        from torch.utils.cpp_extension import BuildExtension
 
     return BuildExtension.with_options(no_python_abi_suffix=True, use_ninja=True)
 
@@ -32,13 +36,24 @@ def get_ext():
 def get_extensions():
     import torch
     from torch.__config__ import parallel_info
-    from torch.utils.cpp_extension import CUDAExtension
 
-    extensions_dir = osp.join("gsplat", "cuda")
-    sources = glob.glob(osp.join(extensions_dir, "csrc", "*.cu")) + glob.glob(
-        osp.join(extensions_dir, "csrc", "*.cpp")
-    )
-    sources += [osp.join(extensions_dir, "ext.cpp")]
+    if FORCE_MUSA:
+        from torch_musa.utils.musa_extension import MUSAExtension
+    else:
+        from torch.utils.cpp_extension import CUDAExtension
+
+    if FORCE_MUSA:
+        extensions_dir = osp.join("gsplat", "cuda")
+        sources = glob.glob(osp.join(extensions_dir, "csrc_musa", "*.mu")) + glob.glob(
+            osp.join(extensions_dir, "csrc_musa", "*.cpp")
+        )
+        sources += [osp.join(extensions_dir, "ext.cpp")]
+    else:
+        extensions_dir = osp.join("gsplat", "cuda")
+        sources = glob.glob(osp.join(extensions_dir, "csrc", "*.cu")) + glob.glob(
+            osp.join(extensions_dir, "csrc", "*.cpp")
+        )
+        sources += [osp.join(extensions_dir, "ext.cpp")]
 
     undef_macros = []
     define_macros = []
@@ -67,41 +82,74 @@ def get_extensions():
         extra_compile_args["cxx"] += ["-arch", "arm64"]
         extra_link_args += ["-arch", "arm64"]
 
-    nvcc_flags = os.getenv("NVCC_FLAGS", "")
-    nvcc_flags = [] if nvcc_flags == "" else nvcc_flags.split(" ")
-    nvcc_flags += ["-O3", "--use_fast_math", "-std=c++17"]
-    if LINE_INFO:
-        nvcc_flags += ["-lineinfo"]
-    if torch.version.hip:
-        # USE_ROCM was added to later versions of PyTorch.
-        # Define here to support older PyTorch versions as well:
-        define_macros += [("USE_ROCM", None)]
-        undef_macros += ["__HIP_NO_HALF_CONVERSIONS__"]
-    else:
-        nvcc_flags += ["--expt-relaxed-constexpr"]
+    # Add GLM_FORCE_PURE to avoid SIMD and exception-related issues
+    define_macros += [("GLM_FORCE_PURE", None)]
 
-    # GLM/Torch has spammy and very annoyingly verbose warnings that this suppresses
-    nvcc_flags += ["-diag-suppress", "20012,186"]
-    extra_compile_args["nvcc"] = nvcc_flags
-    if sys.platform == "win32":
-        extra_compile_args["nvcc"] += [
-            "-DWIN32_LEAN_AND_MEAN",
-            "-allow-unsupported-compiler",
-        ]
+    if FORCE_MUSA:
+        define_macros += [("USE_MUSA", None)]
+        mcc_flags = os.getenv("MCC_FLAGS", "")
+        mcc_flags = [] if mcc_flags == "" else mcc_flags.split(" ")
+        mcc_flags += ["-O2", "-std=c++17"]
+        if LINE_INFO:
+            mcc_flags += ["-lineinfo"]
+        extra_compile_args["mcc"] = mcc_flags
+    else:
+        nvcc_flags = os.getenv("NVCC_FLAGS", "")
+        nvcc_flags = [] if nvcc_flags == "" else nvcc_flags.split(" ")
+        nvcc_flags += ["-O3", "--use_fast_math", "-std=c++17"]
+        if LINE_INFO:
+            nvcc_flags += ["-lineinfo"]
+        if torch.version.hip:
+            # USE_ROCM was added to later versions of PyTorch.
+            # Define here to support older PyTorch versions as well:
+            define_macros += [("USE_ROCM", None)]
+            undef_macros += ["__HIP_NO_HALF_CONVERSIONS__"]
+        else:
+            nvcc_flags += ["--expt-relaxed-constexpr"]
+
+        # GLM/Torch has spammy and very annoyingly verbose warnings that this suppresses
+        nvcc_flags += ["-diag-suppress", "20012,186"]
+        extra_compile_args["nvcc"] = nvcc_flags
+        if sys.platform == "win32":
+            extra_compile_args["nvcc"] += [
+                "-DWIN32_LEAN_AND_MEAN",
+                "-allow-unsupported-compiler",
+            ]
 
     current_dir = pathlib.Path(__file__).parent.resolve()
     glm_path = osp.join(current_dir, "gsplat", "cuda", "csrc", "third_party", "glm")
-    include_dirs = [glm_path, osp.join(current_dir, "gsplat", "cuda", "include")]
 
-    extension = CUDAExtension(
-        "gsplat.csrc",
-        sources,
-        include_dirs=include_dirs,
-        define_macros=define_macros,
-        undef_macros=undef_macros,
-        extra_compile_args=extra_compile_args,
-        extra_link_args=extra_link_args,
-    )
+    if FORCE_MUSA:
+        include_dirs = [
+            glm_path,
+            osp.join(current_dir, "gsplat", "cuda", "include_musa"),
+            osp.join(current_dir, "gsplat", "cuda", "csrc_musa"),
+            osp.join(current_dir, "gsplat", "cuda", "include"),
+            osp.join(current_dir, "gsplat", "cuda", "csrc"),
+        ]
+    else:
+        include_dirs = [glm_path, osp.join(current_dir, "gsplat", "cuda", "include")]
+
+    if FORCE_MUSA:
+        extension = MUSAExtension(
+            "gsplat.csrc",
+            sources,
+            include_dirs=include_dirs,
+            define_macros=define_macros,
+            undef_macros=undef_macros,
+            extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args,
+        )
+    else:
+        extension = CUDAExtension(
+            "gsplat.csrc",
+            sources,
+            include_dirs=include_dirs,
+            define_macros=define_macros,
+            undef_macros=undef_macros,
+            extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args,
+        )
     return [extension]
 
 
